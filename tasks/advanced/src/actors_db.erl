@@ -8,25 +8,30 @@
 
 proc(State) ->
   NewState = receive
-    destroy ->
-      db:destroy(State),
-      exit(self(), destroy);
-    {write, {Key, Element}, Pid} ->
-      Result = db:write(Key, Element, State),
-      Pid ! ok,
-      Result;
-    {delete, Key, Pid} ->
-      Result = db:delete(Key, State),
-      Pid ! ok,
-      Result;
-    {read, Key, Pid} ->
-      Pid ! db:read(Key, State),
-      State;
-    {match, Element, Pid} ->
-      Pid ! db:match(Element, State),
-      State
+    {Operation, Opts, Pid} ->
+      case get_result(Operation, Opts, State) of
+        exit ->
+          exit(self(), Operation);
+        {ok, Result} ->
+          Pid ! {self(), Result},
+          State;
+        {error, Reason} ->
+          Pid ! {self(), {error, Reason}},
+          State;
+        NewDbState ->
+          Pid ! {self(), ok},
+          NewDbState
+      end
   end,
   proc(NewState).
+
+get_result(destroy, _, State) ->
+  db:destroy(State),
+  exit;
+get_result(FuncName, {Key, Element}, State) ->
+  db:FuncName(Key, Element, State);
+get_result(FuncName, Arg, State) ->
+  db:FuncName(Arg, State).
 
 new() ->
   spawn(fun() ->
@@ -34,7 +39,7 @@ new() ->
   end).
 
 destroy(Db) ->
-  Db ! destroy,
+  Db ! {destroy, {}, self()},
   ok.
 
 send_and_receive(Msg, Db) ->
@@ -42,7 +47,7 @@ send_and_receive(Msg, Db) ->
     false -> {error, db_is_destroy};
     true ->
       Db ! Msg,
-      receive Answer -> Answer end
+      receive {Db, Answer} -> Answer end
   end.
 
 write(Key, Element, Db) ->
