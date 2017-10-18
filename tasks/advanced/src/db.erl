@@ -12,16 +12,15 @@
 
 create_config([], Opts) -> Opts;
 create_config([{append, Flag}|Tail], Opts) ->
-  NewOpts = maps:put(append, Flag, Opts),
-  create_config(Tail, NewOpts);
+  create_config(Tail, Opts#{append => Flag});
 create_config([{batch, Number}|Tail], Opts) ->
-  NewOpts = case Number > 0 of
+  N = case Number > 0 of
     true ->
-      maps:put(batch, Number, Opts);
+      Number;
     false ->
-      maps:put(batch, 1, Opts)
+      1
   end,
-  create_config(Tail, NewOpts).
+  create_config(Tail, Opts#{batch => N}).
 
 new() ->
   #{config => #{}, state => []}.
@@ -35,7 +34,7 @@ destroy(_) ->
 write(Key, Element, Db) ->
   State = maps:get(state, Db),
   NewState = write_item(Key, Element, State),
-  maps:update(state, NewState, Db).
+  Db#{state => NewState}.
 
 write_item(Key, Element, State) ->
   [{Key, Element}|State].
@@ -43,7 +42,7 @@ write_item(Key, Element, State) ->
 delete(Key, Db) ->
   State = maps:get(state, Db),
   NewState = delete_item(Key, State),
-  maps:update(state, NewState, Db).
+  Db#{state => NewState}.
 
 delete_item(_, []) -> [];
 delete_item(Key, [Head|Tail]) ->
@@ -65,7 +64,7 @@ find_element(Key, [Head|Tail]) ->
 
 match(Element, Db) ->
   State = maps:get(state, Db),
-  match_element(Element, State).
+  {ok, match_element(Element, State)}.
 
 match_element(_, []) -> [];
 match_element(Element, [Head|Tail]) ->
@@ -85,7 +84,7 @@ append(Key, Element, Db) ->
   end,
   case Result of
     {ok, NewState} ->
-      maps:update(state, NewState, Db);
+      Db#{state => NewState};
     {error, Reason} -> {error, Reason}
   end.
 
@@ -103,7 +102,7 @@ batch_delete(KeyList, Db) ->
   end,
   case Result of
     {ok, NewState} ->
-      maps:update(state, NewState, Db);
+      Db#{state => NewState};
     {error, Reason} -> {error, Reason}
   end.
 
