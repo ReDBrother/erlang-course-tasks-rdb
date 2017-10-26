@@ -11,8 +11,12 @@
 
 -spec new(Name :: atom()) -> ok | {error, Reason :: term()}.
 new(Name) ->
-  gen_server:start_link({local, Name}, ?MODULE, [], []),
-  ok.
+  case gen_server:start_link({local, Name}, ?MODULE, [], []) of
+    {ok, _} ->
+      ok;
+    {error, Reason} ->
+      {error, Reason}
+  end.
 
 -spec delete(Name :: atom()) -> ok.
 delete(Name) ->
