@@ -1,35 +1,81 @@
 -module(lazy).
--export([lazy_map/2,
-         lazy_foldl/3,
-         lazy_filter/2]).
+-export([map/2,
+         foldl/3,
+         filter/2,
+         concatenate/1,
+         read_file/1]).
 
-lazy_map(_, []) ->
+map(_, []) ->
   fun() ->
-      []
+    []
   end;
-lazy_map(Func, [Head|Tail]) ->
+map(Func, [Head|Tail]) ->
   fun() ->
-      [Func(Head)|lazy_map(Func, Tail)]
+    [Func(Head)|map(Func, Tail)]
   end.
 
-lazy_foldl(_, Acc, []) ->
+foldl(_, Acc, []) ->
   fun() ->
-      Acc
+    Acc
   end;
-lazy_foldl(Func, Acc, [Head|Tail]) ->
+foldl(Func, Acc, [Head|Tail]) ->
   fun() ->
-      NewAcc = Func(Head, Acc),
-      lazy_foldl(Func, NewAcc, Tail)
+    NewAcc = Func(Head, Acc),
+    foldl(Func, NewAcc, Tail)
   end.
 
-lazy_filter(_, []) ->
+filter(_, []) ->
   fun() ->
-      []
+    []
   end;
-lazy_filter(Func, [Head|Tail])  ->
+filter(Func, [Head|Tail])  ->
   fun() ->
       case Func(Head) of
-        true -> [Head|lazy_filter(Func, Tail)];
-        false -> lazy_filter(Func, Tail)
+        true -> [Head|filter(Func, Tail)];
+        false -> (filter(Func, Tail))()
       end
   end.
+
+append([], LazyList) ->
+  LazyList;
+append([Head|Tail], LazyList) ->
+  fun() ->
+    [Head|append(Tail, LazyList)]
+  end.
+
+concatenate([]) ->
+  fun() ->
+    []
+  end;
+concatenate([Head|Tail]) ->
+  append(Head, concatenate(Tail)).
+
+read_file(File) ->
+  case file:open(File, read) of
+    {error, Reason} ->
+      {error, Reason};
+    {ok, F} ->
+      fun () ->
+          read_line(F, "")
+      end
+  end.
+
+read_line(F, "") ->
+  case file:read(F, 1) of
+    {ok, "\n"} ->
+        "";
+    eof ->
+      eof;
+    {ok, Item} ->
+      read_line(F, Item)
+  end;
+read_line(F, Acc) ->
+  case file:read(F, 1) of
+    {ok, "\n"} ->
+      Acc;
+    eof ->
+      Acc;
+    {ok, Item} ->
+      read_line(F, Acc ++ Item)
+  end.
+
