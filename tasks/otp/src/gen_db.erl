@@ -9,14 +9,9 @@
 -export([init/1, terminate/2, handle_call/3, handle_cast/2]).
 -behaviour(gen_server).
 
--spec new(Name :: atom()) -> ok | {error, Reason :: term()}.
+-spec new(Name :: atom()) -> {ok, pid()} | {error, Reason :: term()}.
 new(Name) ->
-  case gen_server:start_link({local, Name}, ?MODULE, [], []) of
-    {ok, _} ->
-      ok;
-    {error, Reason} ->
-      {error, Reason}
-  end.
+  gen_server:start_link({local, Name}, ?MODULE, [], []).
 
 -spec delete(Name :: atom()) -> ok.
 delete(Name) ->

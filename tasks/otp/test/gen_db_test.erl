@@ -7,7 +7,7 @@ new_delete_test() ->
   Res2 = gen_db:new(database),
 
   ?assert(whereis(database) =/= false),
-  ?assertEqual(ok, Res1),
+  ?assertMatch({ok, _}, Res1),
   ?assertMatch({error, _}, Res2),
 
   ok = gen_db:delete(database),
@@ -15,8 +15,8 @@ new_delete_test() ->
   ?assertEqual(undefined, whereis(database)).
 
 insert_find_test() ->
-  ok = gen_db:new(database1),
-  ok = gen_db:new(database2),
+  {ok, _} = gen_db:new(database1),
+  {ok, _} = gen_db:new(database2),
 
   ok = gen_db:insert(database1, key, "value1"),
   ok = gen_db:insert(database2, key, "value2"),
@@ -30,8 +30,8 @@ insert_find_test() ->
   ?assertEqual(not_found, Res3).
 
 delete_objects_test() ->
-  ok = gen_db:new(database3),
-  ok = gen_db:new(database4),
+  {ok, _} = gen_db:new(database3),
+  {ok, _} = gen_db:new(database4),
 
   ok = gen_db:insert(database3, key1, "value1"),
   ok = gen_db:insert(database4, key1, "value1"),
