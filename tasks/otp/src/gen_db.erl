@@ -6,7 +6,7 @@
          insert/3,
          find/2]).
 
--export([init/1, handle_call/3, handle_cast/2]).
+-export([init/1, terminate/2, handle_call/3, handle_cast/2]).
 -behaviour(gen_server).
 
 -spec new(Name :: atom()) -> ok | {error, Reason :: term()}.
@@ -20,7 +20,7 @@ new(Name) ->
 
 -spec delete(Name :: atom()) -> ok.
 delete(Name) ->
-  gen_server:cast(Name, delete).
+  gen_server:stop(Name).
 
 -spec delete(Name :: atom(), Key :: term()) -> ok.
 delete(Name, Key) ->
@@ -41,8 +41,9 @@ find(Name, Key) ->
 init(_) ->
   {ok, #{}}.
 
-handle_cast(delete, _State) ->
-  {stop, delete, #{}};
+terminate(_Reason, _State) ->
+  ok.
+
 handle_cast({delete, Key}, State) ->
   NewState = maps:remove(Key, State),
   {noreply, NewState};
