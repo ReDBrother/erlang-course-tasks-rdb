@@ -84,22 +84,20 @@ waiting_pin({call, From}, {insert_card, _CardNo}, Data) ->
   ]};
 waiting_pin(StateEvent, {push_button, cancel}, Data) ->
   handle_event(StateEvent, {ok, card_is_return}, waiting_pin, Data);
-waiting_pin({call, From}, {push_button, enter}, Data) ->
+waiting_pin(StateEvent, {push_button, enter}, Data) ->
   {CardNo, Pin, _} = Data#data.current_card,
   Input = Data#data.input,
   case integer_to_list(Pin) =:= Input of
     true ->
-      NewData = Data#data{input = "0"},
       Reply = {ok, valid_pin},
       io:fwrite("[~p] ~p - верный пинкод~n", [CardNo, Input]),
-      io:fwrite("Выберите операцию [withdraw/deposit]~n"),
-      {next_state, mode, NewData, [{reply, From, Reply}]};
+      handle_event(StateEvent, {select_mode, Reply}, waiting_pin, Data);
     false ->
       io:fwrite("[~p] Вы ввели неверный пинкод ~p~n", [CardNo, Input]),
-      handle_event({call, From}, {error, invalid_pin}, waiting_pin, Data)
+      handle_event(StateEvent, {error, invalid_pin}, waiting_pin, Data)
   end;
-waiting_pin(StateEvent, {push_button, Number}, Data) when Number >= '0' andalso Number =< '9' ->
-  handle_event(StateEvent, {change_input, Number}, waiting_pin, Data);
+waiting_pin(StateEvent, {push_button, _Number} = StateContent, Data) ->
+  handle_event(StateEvent, StateContent, waiting_pin, Data);
 waiting_pin(StateEvent, time_is_out, Data) ->
   handle_event(StateEvent, {error, time_is_out}, waiting_pin, Data);
 waiting_pin(StateEvent, _StateContent, Data) ->
@@ -136,8 +134,7 @@ withdraw({call, From}, {push_button, enter}, Data) ->
       Reply = {ok, {withdraw, Amount}},
       io:fwrite("[~p] Вы сняли со счета ~p~n", [CardNo, Amount]),
       io:fwrite("[~p] У вас на счету ~p~n", [CardNo, Money - Amount]),
-      io:fwrite("Выберите операцию [withdraw/deposit]~n"),
-      {next_state, mode, NewData, [{reply, From, Reply}]};
+      handle_event({call, From}, {select_mode, Reply}, withdraw, NewData);
     false ->
       NewData = Data#data{input = "0"},
       Reply = {error, invalid_amount},
@@ -146,14 +143,15 @@ withdraw({call, From}, {push_button, enter}, Data) ->
       {keep_state, NewData, [{reply, From, Reply}]}
   end;
 withdraw(StateEvent, {push_button, cancel}, Data) ->
-  handle_event(StateEvent, select_mode, withdraw, Data);
-withdraw(StateEvent, {push_button, Number}, Data) when Number >= '0' andalso Number =< '9' ->
-  handle_event(StateEvent, {change_input, Number}, withdraw, Data);
+  Reply = {ok, select_mode},
+  handle_event(StateEvent, {select_mode, Reply}, withdraw, Data);
+withdraw(StateEvent, {push_button, _Number} = StateContent, Data) ->
+  handle_event(StateEvent, StateContent, withdraw, Data);
 withdraw({call, From}, _StateContent, Data) ->
   Reply = {error, invalid_action},
   {keep_state, Data, [{reply, From, Reply}]}.
 
-deposit({call, From}, {push_button, enter}, Data) ->
+deposit(StateEvent, {push_button, enter}, Data) ->
   Cards = Data#data.cards,
   {CardNo, Pin, Money} = Data#data.current_card,
   Input = Data#data.input,
@@ -167,21 +165,21 @@ deposit({call, From}, {push_button, enter}, Data) ->
   Reply = {ok, {deposit, Amount}},
   io:fwrite("[~p] Вы положили на счет ~p~n", [CardNo, Amount]),
   io:fwrite("[~p] У вас на счету ~p~n", [CardNo, Money + Amount]),
-  io:fwrite("Выберите операцию [withdraw/deposit]~n"),
-  {next_state, mode, NewData, [{reply, From, Reply}]};
+  handle_event(StateEvent, {select_mode, Reply}, deposit, NewData);
 deposit(StateEvent, {push_button, cancel}, Data) ->
-  handle_event(StateEvent, select_mode, deposit, Data);
-deposit(StateEvent, {push_button, Number}, Data) ->
-  handle_event(StateEvent, {change_input, Number}, deposit, Data);
+  Reply = {ok, select_mode},
+  handle_event(StateEvent, {select_mode, Reply}, deposit, Data);
+deposit(StateEvent, {push_button, _Number} = StateContent, Data) ->
+  handle_event(StateEvent, StateContent, deposit, Data);
 deposit({call, From}, _StateContent, Data) ->
   Reply = {error, invalid_action},
   {keep_state, Data, [{reply, From, Reply}]}.
 
-handle_event(state_timeout, _StateContent, waiting_pin, Data) ->
+handle_event(state_timeout, _StateContent, _State, Data) ->
   NewData = get_default_data(Data),
   io:fwrite("Время вышло, забирайте карту~n"),
   {next_state, waiting_card, NewData};
-handle_event({call, From}, {change_input, Number}, State, Data) ->
+handle_event({call, From}, {push_button, Number}, State, Data) when Number >= '0' andalso Number =< '9' ->
   Input = Data#data.input,
   NewData = Data#data{input = Input ++ atom_to_list(Number)},
   io:fwrite("Вы нажали ~p~n", [Number]),
@@ -208,9 +206,9 @@ handle_event({call, From}, {error, invalid_pin} = StateContent, waiting_pin, Dat
         get_state_timeout_tuple()
       ]}
   end;
-handle_event({call, From}, select_mode, _State, Data) ->
-  Reply = {ok, mode},
+handle_event({call, From}, {select_mode, Reply}, _State, Data) ->
   NewData = Data#data{input = "0"},
+  io:fwrite("Выберите операцию [withdraw/deposit]~n"),
   {next_state, mode, NewData, [{reply, From, Reply}]};
 handle_event({call, From}, StateContent, _State, Data) ->
   NewData = get_default_data(Data),
