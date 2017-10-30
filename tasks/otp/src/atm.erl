@@ -203,6 +203,8 @@ handle_event({call, From}, {error, invalid_pin} = StateContent, waiting_pin, Dat
         get_state_timeout_tuple()
       ]}
   end;
+handle_event({call, From}, {error, _Reason} = StateContent, waiting_pin, Data) ->
+  {keep_state, Data, [{reply, From, StateContent}, get_state_timeout_tuple()]};
 handle_event({call, From}, {mode, Reply}, _State, Data) ->
   NewData = Data#data{input = "0"},
   io:fwrite("Выберите операцию [withdraw/deposit]~n"),
