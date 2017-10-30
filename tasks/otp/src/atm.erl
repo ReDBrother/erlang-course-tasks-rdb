@@ -91,7 +91,7 @@ waiting_pin(StateEvent, {push_button, enter}, Data) ->
     true ->
       Reply = {ok, valid_pin},
       io:fwrite("[~p] ~p - верный пинкод~n", [CardNo, Input]),
-      handle_event(StateEvent, {select_mode, Reply}, waiting_pin, Data);
+      handle_event(StateEvent, {mode, Reply}, waiting_pin, Data);
     false ->
       io:fwrite("[~p] Вы ввели неверный пинкод ~p~n", [CardNo, Input]),
       handle_event(StateEvent, {error, invalid_pin}, waiting_pin, Data)
@@ -113,9 +113,8 @@ mode({call, From}, {push_button, deposit}, Data) ->
   {next_state, deposit, Data, [{reply, From, Reply}]};
 mode(StateEvent, {push_button, cancel}, Data) ->
   handle_event(StateEvent, {ok, card_is_return}, mode, Data);
-mode({call, From}, _StateContent, Data) ->
-  Reply = {error, invalid_action},
-  {keep_state, Data, [{reply, From, Reply}]}.
+mode(StateEvent, _StateContent, Data) ->
+  handle_event(StateEvent, {error, invalid_action}, mode, Data).
 
 withdraw({call, From}, {push_button, enter}, Data) ->
   Cards = Data#data.cards,
@@ -134,7 +133,7 @@ withdraw({call, From}, {push_button, enter}, Data) ->
       Reply = {ok, {withdraw, Amount}},
       io:fwrite("[~p] Вы сняли со счета ~p~n", [CardNo, Amount]),
       io:fwrite("[~p] У вас на счету ~p~n", [CardNo, Money - Amount]),
-      handle_event({call, From}, {select_mode, Reply}, withdraw, NewData);
+      handle_event({call, From}, {mode, Reply}, withdraw, NewData);
     false ->
       NewData = Data#data{input = "0"},
       Reply = {error, invalid_amount},
@@ -144,12 +143,11 @@ withdraw({call, From}, {push_button, enter}, Data) ->
   end;
 withdraw(StateEvent, {push_button, cancel}, Data) ->
   Reply = {ok, select_mode},
-  handle_event(StateEvent, {select_mode, Reply}, withdraw, Data);
+  handle_event(StateEvent, {mode, Reply}, withdraw, Data);
 withdraw(StateEvent, {push_button, _Number} = StateContent, Data) ->
   handle_event(StateEvent, StateContent, withdraw, Data);
-withdraw({call, From}, _StateContent, Data) ->
-  Reply = {error, invalid_action},
-  {keep_state, Data, [{reply, From, Reply}]}.
+withdraw(StateContent, _StateContent, Data) ->
+  handle_event(StateContent, {error, invalid_action}, withdraw, Data).
 
 deposit(StateEvent, {push_button, enter}, Data) ->
   Cards = Data#data.cards,
@@ -165,15 +163,14 @@ deposit(StateEvent, {push_button, enter}, Data) ->
   Reply = {ok, {deposit, Amount}},
   io:fwrite("[~p] Вы положили на счет ~p~n", [CardNo, Amount]),
   io:fwrite("[~p] У вас на счету ~p~n", [CardNo, Money + Amount]),
-  handle_event(StateEvent, {select_mode, Reply}, deposit, NewData);
+  handle_event(StateEvent, {mode, Reply}, deposit, NewData);
 deposit(StateEvent, {push_button, cancel}, Data) ->
   Reply = {ok, select_mode},
-  handle_event(StateEvent, {select_mode, Reply}, deposit, Data);
+  handle_event(StateEvent, {mode, Reply}, deposit, Data);
 deposit(StateEvent, {push_button, _Number} = StateContent, Data) ->
   handle_event(StateEvent, StateContent, deposit, Data);
-deposit({call, From}, _StateContent, Data) ->
-  Reply = {error, invalid_action},
-  {keep_state, Data, [{reply, From, Reply}]}.
+deposit(StateEvent, _StateContent, Data) ->
+  handle_event(StateEvent, {error, invalid_action}, deposit, Data).
 
 handle_event(state_timeout, _StateContent, _State, Data) ->
   NewData = get_default_data(Data),
@@ -206,10 +203,12 @@ handle_event({call, From}, {error, invalid_pin} = StateContent, waiting_pin, Dat
         get_state_timeout_tuple()
       ]}
   end;
-handle_event({call, From}, {select_mode, Reply}, _State, Data) ->
+handle_event({call, From}, {mode, Reply}, _State, Data) ->
   NewData = Data#data{input = "0"},
   io:fwrite("Выберите операцию [withdraw/deposit]~n"),
   {next_state, mode, NewData, [{reply, From, Reply}]};
-handle_event({call, From}, StateContent, _State, Data) ->
+handle_event({call, From}, {ok, card_is_return} = StateContent, _State, Data) ->
   NewData = get_default_data(Data),
-  {next_state, waiting_card, NewData, [{reply, From, StateContent}]}.
+  {next_state, waiting_card, NewData, [{reply, From, StateContent}]};
+handle_event({call, From}, StateContent, _State, Data) ->
+  {keep_state, Data, [{reply, From, StateContent}]}.
