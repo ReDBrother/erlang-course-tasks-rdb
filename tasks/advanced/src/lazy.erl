@@ -36,11 +36,14 @@ filter(Func, [Head|Tail])  ->
       end
   end.
 
-append([], LazyList) ->
-  LazyList;
-append([Head|Tail], LazyList) ->
+append(LazyList, LazyListTail) ->
   fun() ->
-    [Head|append(Tail, LazyList)]
+    case LazyList() of
+      [] ->
+        LazyListTail();
+      [Head|Tail] ->
+        [Head|append(Tail, LazyListTail)]
+    end
   end.
 
 concatenate([]) ->
