@@ -1,6 +1,6 @@
 -module(gen_proc).
 
--export([start/2, send/2, loop/2]).
+-export([start/2, cast/2, call/2, loop/2]).
 
 start(Module, InitArgs) ->
   spawn(fun() ->
@@ -9,7 +9,12 @@ start(Module, InitArgs) ->
     Module:terminate(LoopState)
   end).
 
-send(Proc, Request) ->
+cast(Proc, Request) ->
+  Ref = make_ref(),
+  Proc ! {Ref, self(), Request},
+  ok.
+
+call(Proc, Request) ->
   Ref = make_ref(),
   Proc ! {Ref, self(), Request},
   receive
@@ -23,8 +28,6 @@ loop(Module, State) ->
   receive
     {'DOWN', MRef, process, Pid, _} ->
       try Module:handle_down(MRef, Pid, State) of
-        {terminate, NewState} ->
-          NewState;
         {noreply, NewState} ->
           loop(Module, NewState)
       catch

@@ -7,8 +7,12 @@
     stdlib
    ]},
   {env,[]},
-  {modules, []},
-
+  {modules, [actors_sup, election, election_server, voter, gen_proc]},
+  {lager, [
+    {handler , [
+      {lager_console_backend, [{level, info}]}
+    ]}
+  ]},
   {maintainers, []},
   {licenses, ["Apache 2.0"]},
   {links, []}
