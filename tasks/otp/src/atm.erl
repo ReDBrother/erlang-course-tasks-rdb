@@ -1,216 +1,243 @@
 -module(atm).
 -behaviour(gen_statem).
 
--export([insert_card/1, push_button/1]).
+%%---------------------------------------------------
+%%
+%% This module implements logic of automated teller machine
+%%
+%%----------------------------------------------------
 
+%%% exported API
 -export([start_link/1,
-         init/1,
-         terminate/1,
+         insert_card/2,
+         push_button/2,
+         terminate_atm/2]).
+
+%%% exported internals of gen_statem
+-export([init/1,
          terminate/3,
          callback_mode/0,
          waiting_card/3,
          waiting_pin/3,
-         mode/3,
+         select_mode/3,
          withdraw/3,
-         deposit/3,
-         handle_event/4]).
+         deposit/3]).
 
+%%% record
 -record(data, {
-  cards = [],
-  current_card = {},
-  input = "",
-  attempts = 0
+  current_card,
+  input = [],
+  attempts = 1
 }).
 
--spec start_link([{CardNo :: integer(), Pin :: integer(), Balance :: integer()}]) ->
+%%% API
+-spec start_link(Name :: atom()) ->
   {ok, pid()} | {error, any()}.
-start_link(Cards) ->
-  gen_statem:start_link({local, ?MODULE}, ?MODULE, [Cards], []).
+start_link(Name) ->
+  gen_statem:start_link({local, Name}, ?MODULE, [], []).
 
--spec insert_card(CardNo :: integer()) -> ok  | {error, Reason :: term()}.
-insert_card(CardNo) ->
-  gen_statem:call(?MODULE, {insert_card, CardNo}).
+-spec insert_card(Name :: atom(),
+                  CardNo :: integer()) ->
+  ok  | {error, Reason :: any()}.
+insert_card(Name, CardNo) ->
+  gen_statem:call(Name, {insert_card, CardNo}).
 
--spec push_button(Button :: enter|withdraw|deposit|cancel|'0'|'1'|'2'|'3'|'4'|'5'|'6'|'7'|'8'|'9')->
-  continue | {ok, Result :: term()} | {error, Reason :: term()}.
-push_button(Button) ->
-  gen_statem:call(?MODULE, {push_button, Button}).
+-type user_command() :: enter|withdraw|deposit|cancel.
+-type terminal_digit() :: 0|1|2|3|4|5|6|7|8|9.
 
-init([Cards]) ->
-  Data = #data{cards = Cards},
-  {ok, waiting_card, Data}.
+-spec push_button(Name :: atom(),
+                  Button :: user_command() | terminal_digit()) ->
+  continue | {ok, Result :: any()} | {error, Reason :: any()}.
+push_button(Name, Button) ->
+  gen_statem:call(Name, {push_button, Button}).
 
-terminate(_) ->
-  gen_statem:stop(?MODULE).
+-spec terminate_atm(Name :: atom(), Reason :: any()) -> ok.
+terminate_atm(Name, _Reason) ->
+  gen_statem:stop(Name).
+
+%%% internal callbacks
+init([]) ->
+  {ok, waiting_card, #data{}}.
 
 terminate(_Reason, _State, _Data) ->
   ok.
 
-callback_mode() -> state_functions.
-
-get_state_timeout_tuple() ->
-  {state_timeout, 10000, time_is_out}.
-
-get_default_data(Data) ->
-  Cards = Data#data.cards,
-  #data{cards = Cards}.
+callback_mode() ->
+  state_functions.
 
 waiting_card({call, From}, {insert_card, CardNo}, Data) ->
-  Cards = Data#data.cards,
-  case lists:keyfind(CardNo, 1, Cards) of
-    false ->
-      Reply = {error, invalid_card},
-      io:fwrite("Карточка недействительна (CardNo: ~p)~n", [CardNo]),
-      {keep_state, Data, [{reply, From, Reply}]};
-    Card ->
-      NewData = Data#data{current_card = Card},
-      Reply = ok,
-      io:fwrite("Вы вставили карточку ~p~n", [CardNo]),
-      io:fwrite("[~p] Введите ваш пин код ~n", [CardNo]),
-      {next_state, waiting_pin, NewData, [
-        {reply, From, Reply},
-        get_state_timeout_tuple()
-      ]}
-  end;
-waiting_card(StateEvent, _StateContent, Data) ->
-  handle_event(StateEvent, {error, invalid_action}, waiting_card, Data).
-
-waiting_pin({call, From}, {insert_card, _CardNo}, Data) ->
-  {CurrentCardNo, _, _} = Data#data.current_card,
-  Reply = {error, {already_have_card, CurrentCardNo}},
+  handle_validate_card(
+    bank:validate_card(CardNo),
+    From,
+    CardNo,
+    Data
+  );
+waiting_card({call, From}, _StateContent, Data) ->
   {keep_state, Data, [
-    {reply, From, Reply},
+    {reply, From, {error, invalid_action}}
+  ]}.
+
+waiting_pin({call, From}, {push_button, enter},
+            #data{current_card = CardNo, input = Pin} = Data) ->
+  {ok, MaxAttempts} = application:get_env(max_attempts),
+  handle_validate_pin(
+    bank:validate_pin(CardNo, Pin),
+    From,
+    MaxAttempts,
+    Data
+  );
+waiting_pin({call, From}, {push_button, cancel}, Data) ->
+  NewData = reset_data(Data),
+  {next_state, waiting_card, NewData, [
+    {reply, From, {ok, card_is_return}}
+  ]};
+waiting_pin(StateEvent, {push_button, Number}, Data) ->
+  push_number(StateEvent, Number, waiting_pin, Data);
+waiting_pin(state_timeout, _Reason, Data) ->
+  NewData = reset_data(Data),
+  io:fwrite("time is out~n"),
+  {next_state, waiting_card, NewData};
+waiting_pin({call, From}, _StateContent, Data) ->
+  {keep_state, Data, [
+    {reply, From, {error, invalid_action}},
+    get_state_timeout_tuple()
+  ]}.
+
+select_mode({call, From}, {push_button, withdraw}, Data) ->
+  {next_state, withdraw, Data, [
+    {reply, From, {ok, withdraw}}
+  ]};
+select_mode({call, From}, {push_button, deposit}, Data) ->
+  {next_state, deposit, Data, [
+    {reply, From, {ok, deposit}}
+  ]};
+select_mode({call, From}, {push_button, cancel}, Data) ->
+  NewData = reset_data(Data),
+  {next_state, waiting_card, NewData, [
+    {reply, From, {ok, card_is_return}}
+  ]};
+select_mode({call, From}, _StateContent, Data) ->
+  {keep_state, Data, [
+    {reply, From, {error, invalid_action}}
+  ]}.
+
+withdraw({call, From}, {push_button, enter},
+         #data{current_card = CardNo, input = Input} = Data) ->
+  Amount = input_to_integer(Input),
+  NewData = reset_input(Data),
+  handle_withdraw(
+    bank:withdraw(CardNo, Amount),
+    From,
+    Amount,
+    NewData
+  );
+withdraw({call, From}, {push_button, cancel}, Data) ->
+  NewData = reset_input(Data),
+  {next_state, select_mode, NewData, [
+    {reply, From, {ok, select_mode}}
+  ]};
+withdraw(StateEvent, {push_button, Number}, Data) ->
+  push_number(StateEvent, Number, withdraw, Data);
+withdraw({call, From}, _StateContent, Data) ->
+  {keep_state, Data, [
+    {reply, From, {error, invalid_action}}
+  ]}.
+
+deposit({call, From}, {push_button, enter},
+        #data{current_card = CardNo, input = Input} = Data) ->
+  Amount = input_to_integer(Input),
+  NewData = reset_input(Data),
+  Msg = bank:deposit(CardNo, Amount),
+  {next_state, select_mode, NewData, [
+    {reply, From, Msg}
+  ]};
+deposit({call, From}, {push_button, cancel}, Data) ->
+  NewData = reset_input(Data),
+  {next_state, select_mode, NewData, [
+    {reply, From, {ok, select_mode}}
+  ]};
+deposit(StateEvent, {push_button, Number}, Data) ->
+  push_number(StateEvent, Number, deposit, Data);
+deposit({call, From}, _StateContent, Data) ->
+  {keep_state, Data, [
+    {reply, From, {error, invalid_action}}
+  ]}.
+
+%%% helpers
+handle_validate_card({ok, valid_card}, From, CardNo, Data) ->
+  NewData = Data#data{current_card = CardNo},
+  {next_state, waiting_pin, NewData, [
+    {reply, From, ok},
     get_state_timeout_tuple()
   ]};
-waiting_pin(StateEvent, {push_button, cancel}, Data) ->
-  handle_event(StateEvent, {ok, card_is_return}, waiting_pin, Data);
-waiting_pin(StateEvent, {push_button, enter}, Data) ->
-  {CardNo, Pin, _} = Data#data.current_card,
-  Input = Data#data.input,
-  case integer_to_list(Pin) =:= Input of
-    true ->
-      Reply = {ok, valid_pin},
-      io:fwrite("[~p] ~p - верный пинкод~n", [CardNo, Input]),
-      handle_event(StateEvent, {mode, Reply}, waiting_pin, Data);
-    false ->
-      io:fwrite("[~p] Вы ввели неверный пинкод ~p~n", [CardNo, Input]),
-      handle_event(StateEvent, {error, invalid_pin}, waiting_pin, Data)
-  end;
-waiting_pin(StateEvent, {push_button, _Number} = StateContent, Data) ->
-  handle_event(StateEvent, StateContent, waiting_pin, Data);
-waiting_pin(StateEvent, time_is_out, Data) ->
-  handle_event(StateEvent, {error, time_is_out}, waiting_pin, Data);
-waiting_pin(StateEvent, _StateContent, Data) ->
-  handle_event(StateEvent, {error, invalid_action}, waiting_pin, Data).
+handle_validate_card({error, Reason}, From, _CardNo, Data) ->
+  {keep_state, Data, [
+    {reply, From, {error, Reason}}
+  ]}.
 
-mode({call, From}, {push_button, withdraw}, Data) ->
-  Reply = {ok, withdraw},
-  io:fwrite("Введите Сумму, которую хотите снять~n"),
-  {next_state, withdraw, Data, [{reply, From, Reply}]};
-mode({call, From}, {push_button, deposit}, Data) ->
-  Reply = {ok, deposit},
-  io:fwrite("Введите Сумму, которую хотите ввести~n"),
-  {next_state, deposit, Data, [{reply, From, Reply}]};
-mode(StateEvent, {push_button, cancel}, Data) ->
-  handle_event(StateEvent, {ok, card_is_return}, mode, Data);
-mode(StateEvent, _StateContent, Data) ->
-  handle_event(StateEvent, {error, invalid_action}, mode, Data).
+handle_validate_pin({ok, valid_pin}, From, _MaxAttempts,
+                    #data{input = Pin} = Data) ->
+  NewData = reset_input(Data),
+  {next_state, select_mode, NewData, [
+    {reply, From, {ok, {valid_pin, Pin}}}
+  ]};
+handle_validate_pin({error, Reason}, From, MaxAttempts,
+                    #data{attempts = Attempts} = Data) when Attempts < MaxAttempts ->
+  NewData = Data#data{input = [], attempts = Attempts + 1},
+  {keep_state, NewData, [
+    {reply, From, {error, Reason}},
+    get_state_timeout_tuple()
+  ]};
+handle_validate_pin({error, _Reason}, From, _MaxAttempts, Data) ->
+  NewData = reset_data(Data),
+  {next_state, waiting_card, NewData, [
+    {reply, From, {error, attempts_are_wasted}}
+  ]}.
 
-withdraw({call, From}, {push_button, enter}, Data) ->
-  Cards = Data#data.cards,
-  {CardNo, Pin, Money} = Data#data.current_card,
-  Input = Data#data.input,
-  Amount = list_to_integer(Input),
-  case Money >= Amount of
-    true ->
-      NewCard = {CardNo, Pin, Money - Amount},
-      Cards = Data#data.cards,
-      NewCards = lists:keyreplace(CardNo, 1, Cards, NewCard),
-      NewData = Data#data{cards = NewCards,
-        current_card = NewCard,
-        input = "0"
-      },
-      Reply = {ok, {withdraw, Amount}},
-      io:fwrite("[~p] Вы сняли со счета ~p~n", [CardNo, Amount]),
-      io:fwrite("[~p] У вас на счету ~p~n", [CardNo, Money - Amount]),
-      handle_event({call, From}, {mode, Reply}, withdraw, NewData);
-    false ->
-      NewData = Data#data{input = "0"},
-      Reply = {error, invalid_amount},
-      io:fwrite("[~p] Недостаточно средств на счету (Money: ~p, Input: ~p) ~n", [CardNo, Money, Amount]),
-      io:fwrite("Введите сумму, которую хотите снять~n"),
-      {keep_state, NewData, [{reply, From, Reply}]}
-  end;
-withdraw(StateEvent, {push_button, cancel}, Data) ->
-  Reply = {ok, select_mode},
-  handle_event(StateEvent, {mode, Reply}, withdraw, Data);
-withdraw(StateEvent, {push_button, _Number} = StateContent, Data) ->
-  handle_event(StateEvent, StateContent, withdraw, Data);
-withdraw(StateContent, _StateContent, Data) ->
-  handle_event(StateContent, {error, invalid_action}, withdraw, Data).
+handle_withdraw({ok, {withdraw, Amount}} = Reply, From, Amount, Data) ->
+  {next_state, select_mode, Data, [
+    {reply, From, Reply}
+  ]};
+handle_withdraw({error, Reason}, From, _Amount, Data) ->
+  {keep_state, Data, [
+    {reply, From, {error, Reason}}
+  ]}.
 
-deposit(StateEvent, {push_button, enter}, Data) ->
-  Cards = Data#data.cards,
-  {CardNo, Pin, Money} = Data#data.current_card,
-  Input = Data#data.input,
-  Amount = list_to_integer(Input),
-  NewCard = {CardNo, Pin, Money + Amount},
-  NewCards = lists:keyreplace(CardNo, 1, Cards, NewCard),
-  NewData = Data#data{cards = NewCards,
-    current_card = NewCard,
-    input = "0"
-  },
-  Reply = {ok, {deposit, Amount}},
-  io:fwrite("[~p] Вы положили на счет ~p~n", [CardNo, Amount]),
-  io:fwrite("[~p] У вас на счету ~p~n", [CardNo, Money + Amount]),
-  handle_event(StateEvent, {mode, Reply}, deposit, NewData);
-deposit(StateEvent, {push_button, cancel}, Data) ->
-  Reply = {ok, select_mode},
-  handle_event(StateEvent, {mode, Reply}, deposit, Data);
-deposit(StateEvent, {push_button, _Number} = StateContent, Data) ->
-  handle_event(StateEvent, StateContent, deposit, Data);
-deposit(StateEvent, _StateContent, Data) ->
-  handle_event(StateEvent, {error, invalid_action}, deposit, Data).
+push_number({call, From}, Number, waiting_pin,
+            #data{input = Input} = Data) when Number >= 0 andalso Number =< 9 ->
+  NewData = Data#data{input = Input ++ [Number]},
+  {keep_state, NewData, [
+    {reply, From, continue},
+    get_state_timeout_tuple()
+  ]};
+push_number({call, From}, _Number, waiting_pin, Data) ->
+  {keep_state, Data, [
+    {reply, From, {error, invalid_action}},
+    get_state_timeout_tuple()
+  ]};
+push_number({call, From}, Number, _State,
+            #data{input = Input} = Data) when Number >= 0 andalso Number =< 9 ->
+  NewData = Data#data{input = Input ++ [Number]},
+  {keep_state, NewData, [{reply, From, continue}]};
+push_number({call, From}, _Number, _State, Data) ->
+  {keep_state, Data, [
+    {reply, From, {error, invalid_action}}
+  ]}.
 
-handle_event(state_timeout, _StateContent, _State, Data) ->
-  NewData = get_default_data(Data),
-  io:fwrite("Время вышло, забирайте карту~n"),
-  {next_state, waiting_card, NewData};
-handle_event({call, From}, {push_button, Number}, State, Data) when Number >= '0' andalso Number =< '9' ->
-  Input = Data#data.input,
-  NewData = Data#data{input = Input ++ atom_to_list(Number)},
-  io:fwrite("Вы нажали ~p~n", [Number]),
-  case State of
-    waiting_pin ->
-      {keep_state, NewData, [
-        {reply, From, continue},
-        get_state_timeout_tuple()
-      ]};
-    _ ->
-      {keep_state, NewData, [{reply, From, continue}]}
-  end;
-handle_event({call, From}, {error, invalid_pin} = StateContent, waiting_pin, Data) ->
-  Attempts = Data#data.attempts + 1,
-  case Attempts of
-    3 ->
-      NewData = get_default_data(Data),
-      {next_state, waiting_card, NewData, [{reply, From, StateContent}]};
-    _ ->
-      NewData = Data#data{attempts = Attempts},
-      Reply = {error, 3 - Attempts},
-      {keep_state, NewData, [
-        {reply, From, Reply},
-        get_state_timeout_tuple()
-      ]}
-  end;
-handle_event({call, From}, {error, _Reason} = StateContent, waiting_pin, Data) ->
-  {keep_state, Data, [{reply, From, StateContent}, get_state_timeout_tuple()]};
-handle_event({call, From}, {mode, Reply}, _State, Data) ->
-  NewData = Data#data{input = "0"},
-  io:fwrite("Выберите операцию [withdraw/deposit]~n"),
-  {next_state, mode, NewData, [{reply, From, Reply}]};
-handle_event({call, From}, {ok, card_is_return} = StateContent, _State, Data) ->
-  NewData = get_default_data(Data),
-  {next_state, waiting_card, NewData, [{reply, From, StateContent}]};
-handle_event({call, From}, StateContent, _State, Data) ->
-  {keep_state, Data, [{reply, From, StateContent}]}.
+get_state_timeout_tuple() ->
+  {ok, Timeout} = application:get_env(state_timeout),
+  {state_timeout, Timeout, time_is_out}.
+
+reset_data(_) ->
+  #data{}.
+
+reset_input(Data) ->
+  Data#data{input = []}.
+
+input_to_integer([]) ->
+  0;
+input_to_integer(Input) ->
+  Str = lists:foldl(fun(Item, Acc) ->
+    Acc ++ integer_to_list(Item)
+  end, "", Input),
+  list_to_integer(Str).

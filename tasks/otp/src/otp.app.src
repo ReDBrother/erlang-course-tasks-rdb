@@ -6,8 +6,14 @@
    [kernel,
     stdlib
    ]},
-  {env,[]},
-  {modules, []},
+  {mod, {otp, []}},
+  {env, [
+    {host, "localhost"},
+    {tcp_server_port, 4001},
+    {state_timeout, 10000},
+    {max_attempts, 3}
+  ]},
+  {modules, [otp_sup, bank, atm, atm_sup]},
 
   {maintainers, []},
   {licenses, ["Apache 2.0"]},

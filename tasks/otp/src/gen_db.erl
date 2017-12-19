@@ -1,4 +1,6 @@
 -module(gen_db).
+-behaviour(gen_server).
+
 -export([new/1,
          delete/1,
          delete/2,
@@ -6,8 +8,10 @@
          insert/3,
          find/2]).
 
--export([init/1, terminate/2, handle_call/3, handle_cast/2]).
--behaviour(gen_server).
+-export([init/1,
+         terminate/2,
+         handle_call/3,
+         handle_cast/2]).
 
 -spec new(Name :: atom()) -> {ok, pid()} | {error, Reason :: term()}.
 new(Name) ->
